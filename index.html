@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SIGLOC Agent | Dashboard</title>
+    <title>Niarsigloc Cloud | Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -18,12 +18,7 @@
             --glass: blur(12px);
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Outfit', sans-serif;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Outfit', sans-serif; }
 
         body {
             background-color: var(--bg);
@@ -34,270 +29,326 @@
             background-image: 
                 radial-gradient(circle at 0% 0%, hsla(210, 100%, 50%, 0.15) 0%, transparent 40%),
                 radial-gradient(circle at 100% 100%, hsla(280, 100%, 50%, 0.15) 0%, transparent 40%);
+            transition: opacity 0.3s ease;
         }
 
-        header {
-            padding: 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            max-width: 1200px;
-            width: 100%;
-            margin: 0 auto;
-        }
+        .view-section { display: none; width: 100%; max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .view-section.active { display: block; animation: fadeIn 0.5s ease; }
 
-        .logo {
-            font-size: 1.5rem;
-            font-weight: 800;
-            background: linear-gradient(to right, var(--primary), var(--secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: -1px;
-        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-        .container {
-            flex: 1;
-            max-width: 1200px;
-            width: 100%;
-            margin: 0 auto;
-            padding: 0 2rem 2rem;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
-        }
+        /* HEADER */
+        header { padding: 1.5rem 2rem; display: flex; justify-content: space-between; align-items: center; max-width: 1200px; width: 100%; margin: 0 auto; }
+        .logo { font-size: 1.5rem; font-weight: 800; background: linear-gradient(to right, var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1px; }
 
-        .card {
-            background: var(--surface);
-            backdrop-filter: var(--glass);
-            border: 1px solid var(--border);
-            border-radius: 24px;
-            padding: 2rem;
-            transition: transform 0.3s ease;
-        }
+        /* CARDS */
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        .card { background: var(--surface); backdrop-filter: var(--glass); border: 1px solid var(--border); border-radius: 24px; padding: 2rem; transition: all 0.3s ease; }
+        .card:hover { border-color: rgba(255, 255, 255, 0.2); }
+        h2 { font-size: 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; }
 
-        .card:hover {
-            transform: translateY(-5px);
-            border-color: rgba(255, 255, 255, 0.2);
-        }
+        /* AUTH BOXES */
+        .auth-box { max-width: 450px; margin: 10vh auto; }
+        .auth-header { text-align: center; margin-bottom: 2rem; }
+        .auth-header p { color: var(--text-dim); margin-top: 0.5rem; }
 
-        h2 {
-            font-size: 1.25rem;
-            margin-bottom: 2rem;
-            opacity: 0.9;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
+        /* FORMS */
+        .form-group { margin-bottom: 1.25rem; }
+        label { display: block; font-size: 0.875rem; color: var(--text-dim); margin-bottom: 0.5rem; }
+        input, select, textarea { width: 100%; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); border-radius: 12px; padding: 0.875rem 1rem; color: white; font-size: 1rem; outline: none; transition: 0.2s; }
+        input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(100, 180, 255, 0.1); }
+        
+        .btn { width: 100%; padding: 1rem; border-radius: 12px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s; display: flex; justify-content: center; align-items: center; gap: 10px; }
+        .btn-primary { background: linear-gradient(to right, var(--primary), #4a9eff); color: #000; }
+        .btn-outline { background: rgba(255,255,255,0.05); color: white; border: 1px solid var(--border); }
+        .btn:active { transform: scale(0.98); }
 
-        .status-badge {
-            padding: 0.5rem 1rem;
-            border-radius: 50px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
+        .status-badge { padding: 0.4rem 0.8rem; border-radius: 50px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
         .status-online { background: rgba(50, 255, 150, 0.1); color: var(--accent); }
         .status-offline { background: rgba(255, 100, 100, 0.1); color: #ff6464; }
 
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
+        .console { grid-column: span 2; background: #000; border-radius: 16px; padding: 1.25rem; font-family: 'Courier New', monospace; font-size: 0.8rem; height: 180px; overflow-y: auto; border: 1px solid var(--border); }
+        .log-entry { margin-bottom: 0.2rem; }
+        .log-time { color: var(--text-dim); margin-right: 8px; }
 
-        label {
-            display: block;
-            font-size: 0.875rem;
-            color: var(--text-dim);
-            margin-bottom: 0.5rem;
-        }
-
-        input {
-            width: 100%;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1rem;
-            color: white;
-            font-size: 1rem;
-            outline: none;
-            transition: 0.2s;
-        }
-
-        input:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(100, 180, 255, 0.1);
-        }
-
-        .btn {
-            width: 100%;
-            padding: 1rem;
-            border-radius: 12px;
-            border: none;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .btn-primary {
-            background: linear-gradient(to right, var(--primary), #4a9eff);
-            color: #000;
-        }
-
-        .btn-primary:active { transform: scale(0.98); }
-
-        .qr-card {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-        }
-
-        #qr-container {
-            background: white;
-            padding: 1rem;
-            border-radius: 16px;
-            margin: 1rem 0;
-            width: 200px;
-            height: 200px;
-            display: none;
-        }
-
+        #qr-container { background: white; padding: 10px; border-radius: 12px; margin: 15px 0; width: 160px; height: 160px; display: none; }
         #qr-container img { width: 100%; height: 100%; }
 
-        .console {
-            grid-column: span 2;
-            background: #000;
-            border-radius: 16px;
-            padding: 1.5rem;
-            font-family: 'Courier New', monospace;
-            font-size: 0.875rem;
-            height: 200px;
-            overflow-y: auto;
-            border: 1px solid var(--border);
-        }
-
-        .log-entry { margin-bottom: 0.25rem; }
-        .log-time { color: var(--text-dim); margin-right: 10px; }
-
-        @media (max-width: 768px) {
-            .container { grid-template-columns: 1fr; }
-            .console { grid-column: span 1; }
-        }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } .console { grid-column: span 1; } }
     </style>
 </head>
 <body>
-    <header>
-        <div class="logo">SIGLOC <span style="font-weight: 300; opacity: 0.7;">AGENT</span></div>
-        <div id="connection-status" class="status-badge status-offline">Verificando...</div>
-    </header>
 
-    <div class="container">
-        <!-- Config Section -->
+    <!-- VIEW: LOGIN -->
+    <section id="view-login" class="view-section auth-box">
         <div class="card">
-            <h2>⚙️ Configuração</h2>
-            <div class="form-group">
-                <label>Frequência</label>
-                <select id="freq-input" onchange="toggleFrequency()" style="width: 100%; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; color: white; outline: none;">
-                    <option value="diario">Diário (Horário customizado)</option>
-                    <option value="mensal">Mensal (Todo dia 01 às 00:01)</option>
-                </select>
-            </div>
-            <div class="form-group" id="time-container">
-                <label>Horário de Execução</label>
-                <input type="time" id="time-input">
+            <div class="auth-header">
+                <div class="logo" style="font-size: 2rem;">Niarsigloc</div>
+                <p>Entre para gerenciar seus disparos</p>
             </div>
             <div class="form-group">
-                <label>WhatsApp de Destino</label>
-                <input type="text" id="phone-input" placeholder="Ex: 5563981142553">
+                <label>E-mail</label>
+                <input type="email" id="login-email" placeholder="seu@email.com">
+            </div>
+            <div class="form-group">
+                <label>Senha</label>
+                <input type="password" id="login-pass" placeholder="******">
+            </div>
+            <button class="btn btn-primary" onclick="login()">Entrar no Sistema</button>
+            <p style="text-align: center; margin-top: 1.5rem; font-size: 0.875rem; color: var(--text-dim);">
+                Novo por aqui? <a href="#" onclick="showView('register')" style="color: var(--primary); text-decoration: none;">Crie sua conta</a>
+            </p>
+        </div>
+    </section>
+
+    <!-- VIEW: REGISTER (ONBOARDING) -->
+    <section id="view-register" class="view-section auth-box" style="max-width: 550px;">
+        <div class="card">
+            <div class="auth-header">
+                <div class="logo">Criar Nova Conta</div>
+                <p>Configure seu acesso ao SIGLOC Cloud</p>
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                 <div class="form-group">
-                    <label>SIGLOC Email</label>
-                    <input type="text" id="user-input" placeholder="seu@email.com">
+                    <label>Nome Completo</label>
+                    <input type="text" id="reg-name" placeholder="Nome">
                 </div>
                 <div class="form-group">
-                    <label>SIGLOC Senha</label>
-                    <input type="password" id="pass-input" placeholder="******">
+                    <label>E-mail</label>
+                    <input type="email" id="reg-email" placeholder="seu@email.com">
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div class="form-group">
+                    <label>Congregação</label>
+                    <input type="text" id="reg-cong" placeholder="Nome da Congregação">
+                </div>
+                <div class="form-group">
+                    <label>Grupo SIGLOC</label>
+                    <input type="text" id="reg-group" placeholder="Ex: admm">
                 </div>
             </div>
             <div class="form-group">
-                <label>Mensagem para dias sem registros</label>
-                <textarea id="msg-vazio-input" style="width: 100%; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; color: white; outline: none; height: 80px; resize: none;"></textarea>
+                <label>Crie uma Senha</label>
+                <input type="password" id="reg-pass" placeholder="Acesso ao Niarsigloc">
             </div>
-            <button class="btn btn-primary" onclick="salvarConfig()">Atualizar Configurações</button>
-            <button class="btn" style="background: rgba(255,255,255,0.05); color: white; margin-top: 10px;" onclick="runNow()">
-                🚀 Executar Agora
-            </button>
-        </div>
-
-        <!-- WhatsApp Link Section -->
-        <div class="card qr-card">
-            <h2>🔗 Conexão WhatsApp</h2>
-            <p id="qr-status-text" style="color: var(--text-dim); margin-bottom: 1rem;">
-                Instalação do Evolution Go detectada.
+            <button class="btn btn-primary" onclick="register()">Finalizar Cadastro</button>
+            <p style="text-align: center; margin-top: 1.5rem; font-size: 0.875rem; color: var(--text-dim);">
+                Já tem conta? <a href="#" onclick="showView('login')" style="color: var(--primary); text-decoration: none;">Faça login</a>
             </p>
-            <div id="qr-container"></div>
-            <button id="qr-btn" class="btn" style="background: var(--accent); color: #000;" onclick="handleConnection()">
-                Gerar QR Code
-            </button>
         </div>
+    </section>
 
-        <!-- Consoles Section -->
-        <div class="card console" id="log-list">
-            <div class="log-entry"><span class="log-time">HH:MM</span> Aguardando logs...</div>
+    <!-- VIEW: DASHBOARD -->
+    <section id="view-dashboard" class="view-section">
+        <header>
+            <div class="logo">Niarsigloc <span style="font-weight: 300; opacity: 0.5;">DASHBOARD</span></div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div id="connection-status" class="status-badge status-offline">OFFLINE</div>
+                <button class="btn btn-outline" style="padding: 0.4rem 0.8rem; width: auto; font-size: 0.8rem;" onclick="logout()">Sair</button>
+            </div>
+        </header>
+
+        <div class="grid">
+            <div class="card">
+                <h2>⚙️ Configurações do Robô</h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label>Frequência</label>
+                        <select id="dash-freq" onchange="toggleDashTime()">
+                            <option value="diario">Diário</option>
+                            <option value="mensal">Mensal (Todo dia 01)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="dash-time-container">
+                        <label>Horário</label>
+                        <input type="time" id="dash-time">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>WhatsApp Destino (Resumo)</label>
+                    <input type="text" id="dash-phone" placeholder="5563912345678">
+                </div>
+                <div style="border-top: 1px solid var(--border); padding-top: 1.5rem; margin-top: 0.5rem;">
+                    <p style="font-size: 0.75rem; color: var(--primary); margin-bottom: 1rem; font-weight: 600;">🔐 CREDENCIAIS SIGLOC</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <input type="text" id="dash-sigloc-email" placeholder="E-mail SIGLOC">
+                        <input type="password" id="dash-sigloc-pass" placeholder="Senha SIGLOC">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 1rem;">
+                    <label>Mensagem fallback (Dias vazios)</label>
+                    <textarea id="dash-msg-vazio" style="height: 60px; resize: none;"></textarea>
+                </div>
+
+                <div style="border-top: 1px solid var(--border); padding-top: 1.5rem; margin-bottom: 2rem;">
+                    <p style="font-size: 0.75rem; color: var(--secondary); margin-bottom: 1rem; font-weight: 600;">🔌 EVOLUTION API (AVANÇADO)</p>
+                    <input type="text" id="dash-evo-url" placeholder="URL da API" class="form-group">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <input type="text" id="dash-evo-instance" placeholder="Instância">
+                        <input type="text" id="dash-evo-key" placeholder="API Key">
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" onclick="updateProfile()">Salvar Configurações</button>
+            </div>
+
+            <div class="card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
+                <h2>🔗 Status de Conexão</h2>
+                <p id="qr-status-text" style="color: var(--text-dim); margin-bottom: 1rem; font-size: 0.9rem;">
+                    Vincule seu WhatsApp para iniciar os disparos.
+                </p>
+                <div id="qr-container"></div>
+                <button id="qr-btn" class="btn" style="background: var(--accent); color: #000; width: auto; padding: 0.8rem 2rem;" onclick="handleConnection()">
+                    Vincular WhatsApp
+                </button>
+                <button class="btn btn-outline" style="margin-top: 2rem; width: auto;" onclick="runNow()">🚀 Executar Teste Agora</button>
+            </div>
+
+            <div class="card console" id="log-list">
+                <div class="log-entry"><span class="log-time">HH:MM</span> Iniciando logs do sistema cloud...</div>
+            </div>
         </div>
-    </div>
+    </section>
 
     <script>
-        let currentStatus = 'OFFLINE';
+        const API_URL = '';
+        let TOKEN = localStorage.getItem('niarsigloc_token');
+        let PROFILE = null;
 
-        async function fetchConfig() {
-            const r = await fetch('/api/config');
-            const data = await r.json();
-            document.getElementById('freq-input').value = data.frequencia || 'diario';
-            document.getElementById('time-input').value = data.hora_execucao;
-            document.getElementById('phone-input').value = data.destinatario;
-            document.getElementById('user-input').value = data.usuario;
-            document.getElementById('pass-input').value = data.senha;
-            document.getElementById('msg-vazio-input').value = data.msg_vazio || '';
-            toggleFrequency();
+        // AUTH FUNCTIONS
+        async function login() {
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-pass').value;
+            
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email, password})
+                });
+                const data = await res.json();
+                if(res.ok) {
+                    TOKEN = data.access_token;
+                    localStorage.setItem('niarsigloc_token', TOKEN);
+                    loadDashboard();
+                } else {
+                    alert(data.detail || 'Falha no login');
+                }
+            } catch(e) { alert('Erro de conexão'); }
         }
 
-        function toggleFrequency() {
-            const freq = document.getElementById('freq-input').value;
-            const container = document.getElementById('time-container');
-            container.style.display = (freq === 'diario') ? 'block' : 'none';
-        }
-
-        async function salvarConfig() {
+        async function register() {
             const payload = {
-                frequencia: document.getElementById('freq-input').value,
-                hora_execucao: document.getElementById('time-input').value,
-                destinatario: document.getElementById('phone-input').value,
-                usuario: document.getElementById('user-input').value,
-                senha: document.getElementById('pass-input').value,
-                msg_vazio: document.getElementById('msg-vazio-input').value
+                email: document.getElementById('reg-email').value,
+                password: document.getElementById('reg-pass').value,
+                full_name: document.getElementById('reg-name').value,
+                congregacao: document.getElementById('reg-cong').value,
+                grupo_sigloc: document.getElementById('reg-group').value
             };
-            const r = await fetch('/api/config', {
+            
+            const res = await fetch('/api/auth/register', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload)
             });
-            if(r.ok) alert('Configuração salva!');
+            if(res.ok) {
+                alert('Conta criada com sucesso! Faça login.');
+                showView('login');
+            } else {
+                const data = await res.json();
+                alert(data.detail || 'Erro ao criar conta');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('niarsigloc_token');
+            TOKEN = null;
+            showView('login');
+        }
+
+        // VIEW ROUTING
+        function showView(view) {
+            document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+            document.getElementById('view-' + view).classList.add('active');
+        }
+
+        function toggleDashTime() {
+            const freq = document.getElementById('dash-freq').value;
+            document.getElementById('dash-time-container').style.display = (freq === 'diario') ? 'block' : 'none';
+        }
+
+        // DASHBOARD LOGIC
+        async function loadDashboard() {
+            if(!TOKEN) return showView('login');
+            
+            const res = await fetch('/api/profile', {
+                headers: {'Authorization': 'Bearer ' + TOKEN}
+            });
+            if(!res.ok) return logout();
+            
+            const p = await res.json();
+            PROFILE = p;
+            
+            // Fill Fields
+            document.getElementById('dash-freq').value = p.frequencia || 'diario';
+            document.getElementById('dash-time').value = p.hora_execucao || '08:00';
+            document.getElementById('dash-phone').value = p.target_phone || '';
+            document.getElementById('dash-sigloc-email').value = p.sigloc_email || '';
+            document.getElementById('dash-sigloc-pass').value = p.sigloc_senha || '';
+            document.getElementById('dash-msg-vazio').value = p.msg_vazio || '';
+            document.getElementById('dash-evo-url').value = p.evo_url || '';
+            document.getElementById('dash-evo-instance').value = p.evo_instance || '';
+            document.getElementById('dash-evo-key').value = p.evo_apikey || '';
+            
+            toggleDashTime();
+            showView('dashboard');
+            startRefreshLoops();
+        }
+
+        async function updateProfile() {
+            const payload = {
+                congregacao: document.getElementById('reg-cong') ? document.getElementById('reg-cong').value : PROFILE.congregacao,
+                grupo_sigloc: document.getElementById('dash-sigloc-email') ? document.getElementById('dash-sigloc-email').value : '', // Simplified for now
+                sigloc_email: document.getElementById('dash-sigloc-email').value,
+                sigloc_senha: document.getElementById('dash-sigloc-pass').value,
+                target_phone: document.getElementById('dash-phone').value,
+                hora_execucao: document.getElementById('dash-time').value,
+                frequencia: document.getElementById('dash-freq').value,
+                msg_vazio: document.getElementById('dash-msg-vazio').value,
+                evo_url: document.getElementById('dash-evo-url').value,
+                evo_instance: document.getElementById('dash-evo-instance').value,
+                evo_apikey: document.getElementById('dash-evo-key').value,
+                // Mantendo congregacao e grupo que vieram do profile se nao estiverem no form
+                congregacao: PROFILE.congregacao,
+                grupo_sigloc: document.getElementById('dash-sigloc-email').value ? PROFILE.grupo_sigloc : PROFILE.grupo_sigloc
+            };
+            
+            // Correction logic for congregacao/grupo
+            payload.congregacao = PROFILE.congregacao;
+            payload.grupo_sigloc = PROFILE.grupo_sigloc;
+
+            const res = await fetch('/api/profile', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + TOKEN,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            if(res.ok) alert('Configurações salvas!');
         }
 
         async function runNow() {
-            await fetch('/api/run-now', {method: 'POST'});
-            alert('A execução foi iniciada em segundo plano.');
+            await fetch('/api/run-now', {
+                method: 'POST',
+                headers: {'Authorization': 'Bearer ' + TOKEN}
+            });
+            alert('Execução disparada!');
         }
 
         async function fetchLogs() {
+            if(!TOKEN) return;
             const r = await fetch('/api/logs');
             const data = await r.json();
             const list = document.getElementById('log-list');
@@ -311,74 +362,55 @@
         }
 
         async function checkStatus() {
-            try {
-                const r = await fetch('/api/whatsapp/status');
-                const data = await r.json();
-                const badge = document.getElementById('connection-status');
-                const statusText = document.getElementById('qr-status-text');
-                const btn = document.getElementById('qr-btn');
-                
-                currentStatus = data.status;
-
-                if(data.status === 'CONNECTED') {
-                    badge.className = 'status-badge status-online';
-                    badge.innerText = 'CONECTADO';
-                    statusText.innerText = 'WhatsApp conectado e pronto para uso.';
-                    btn.innerText = 'Desconectar WhatsApp';
-                    btn.style.background = '#ff4d4d'; // Vermelho
-                    btn.style.color = '#fff';
-                    btn.style.display = 'flex';
-                } else {
-                    badge.className = 'status-badge status-offline';
-                    badge.innerText = 'DESCONECTADO';
-                    statusText.innerText = 'Clique abaixo para vincular seu WhatsApp.';
-                    btn.innerText = 'Gerar QR Code';
-                    btn.style.background = 'var(--accent)';
-                    btn.style.color = '#000';
-                    btn.style.display = 'flex';
-                }
-            } catch(e) {}
+            if(!TOKEN) return;
+            const res = await fetch('/api/whatsapp/status', {
+                headers: {'Authorization': 'Bearer ' + TOKEN}
+            });
+            const data = await res.json();
+            const badge = document.getElementById('connection-status');
+            const btn = document.getElementById('qr-btn');
+            
+            if(data.status === 'CONNECTED') {
+                badge.className = 'status-badge status-online';
+                badge.innerText = 'CONECTADO';
+                btn.innerText = 'WhatsApp Conectado';
+                btn.style.background = 'rgba(255,255,255,0.05)';
+                btn.style.color = '#fff';
+            } else {
+                badge.className = 'status-badge status-offline';
+                badge.innerText = 'OFFLINE';
+                btn.innerText = 'Vincular WhatsApp';
+                btn.style.background = 'var(--accent)';
+                btn.style.color = '#000';
+            }
         }
 
         async function handleConnection() {
-            if(currentStatus === 'CONNECTED') {
-                if(confirm('Deseja realmente desconectar o WhatsApp?')) {
-                    await fetch('/api/whatsapp/disconnect', {method: 'POST'});
-                    setTimeout(checkStatus, 1000);
-                }
-            } else {
-                gerarQr();
-            }
-        }
-
-        async function gerarQr() {
             const btn = document.getElementById('qr-btn');
             const container = document.getElementById('qr-container');
-            const statusText = document.getElementById('qr-status-text');
-            
             btn.innerText = 'Gerando...';
-            const r = await fetch('/api/whatsapp/connect', {method: 'POST'});
-            const data = await r.json();
             
+            const res = await fetch('/api/whatsapp/connect', {
+                method: 'POST',
+                headers: {'Authorization': 'Bearer ' + TOKEN}
+            });
+            const data = await res.json();
             if(data.base64) {
-                container.innerHTML = `<img src="${data.base64}" alt="QR Code">`;
+                container.innerHTML = `<img src="${data.base64}">`;
                 container.style.display = 'block';
-                statusText.innerText = 'Leia o código com seu WhatsApp';
-                btn.innerText = 'Atualizar QR Code';
-            } else if ((data.error && data.error.includes('already')) || data.message === 'success') {
-                // Se der success mas sem QR, é porque já conectou
-                alert('Conectado com sucesso!');
-                checkStatus();
-            } else {
-                alert('Aviso: ' + (data.error || 'Não foi possível gerar o código. Verifique o servidor.'));
-                btn.innerText = 'Gerar QR Code';
+                btn.innerText = 'Atualizar QR';
             }
         }
 
-        // Init
-        fetchConfig();
-        setInterval(fetchLogs, 3000);
-        setInterval(checkStatus, 5000);
+        function startRefreshLoops() {
+            setInterval(fetchLogs, 4000);
+            setInterval(checkStatus, 6000);
+        }
+
+        // INIT
+        if(TOKEN) loadDashboard();
+        else showView('login');
+
     </script>
 </body>
 </html>

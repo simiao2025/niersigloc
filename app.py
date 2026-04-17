@@ -4,24 +4,45 @@ import threading
 import time
 import requests
 import schedule
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from typing import Optional
 import scraper_sigloc
 
-app = FastAPI(title="SIGLOC Agent API")
+app = FastAPI(title="Niarsigloc Cloud")
 
-CONFIG_FILE = "config.json"
-LOG_BUFFER = []
+# CONFIGURAÇÕES SUPABASE
+SUPABASE_URL = scraper_sigloc.SUPABASE_URL
+SUPABASE_KEY = scraper_sigloc.SUPABASE_KEY
 
-class ConfigUpdate(BaseModel):
+# MODELOS
+class UserRegister(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    congregacao: str
+    grupo_sigloc: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class ProfileUpdate(BaseModel):
+    congregacao: str
+    grupo_sigloc: str
+    sigloc_email: str
+    sigloc_senha: str
+    target_phone: str
     hora_execucao: str
-    destinatario: str
-    usuario: str
-    senha: str
     frequencia: str
     msg_vazio: str
+    evo_url: str
+    evo_instance: str
+    evo_apikey: str
+
+LOG_BUFFER = []
 
 def add_log(msg):
     global LOG_BUFFER
@@ -30,59 +51,102 @@ def add_log(msg):
     if len(LOG_BUFFER) > 50:
         LOG_BUFFER.pop(0)
 
-def run_scheduler():
-    last_config_hash = None
+def run_scheduler_v2():
+    add_log("☁️ Scheduler Multi-usuário iniciado.")
     while True:
         try:
-            config = scraper_sigloc.carregar_config()
-            frequencia = config.get("frequencia", "diario")
-            hora = config.get("hora_execucao", "08:00")
+            # Busca todos os perfis no Supabase
+            headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+            res = requests.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=headers)
             
-            # Geramos um hash simples para detectar mudanças na regra de agendamento
-            current_hash = f"{frequencia}-{hora}"
-            
-            if current_hash != last_config_hash:
-                schedule.clear()
+            if res.status_code == 200:
+                profiles = res.json()
+                hoje = scraper_sigloc.datetime.now()
+                agora_str = hoje.strftime("%H:%M")
                 
-                if frequencia == "mensal":
-                    # Mensal: Dispara todo dia às 00:01, mas a job interna checa se é dia 01
-                    def monthly_check():
-                        if scraper_sigloc.datetime.now().day == 1:
-                            scraper_sigloc.job()
+                for p in profiles:
+                    # Verifica se deve rodar a tarefa mensal (Dia 01 às 00:01)
+                    if p['frequencia'] == 'mensal' and hoje.day == 1 and agora_str == '00:01':
+                        add_log(f"Iniciando tarefa mensal para: {p['nome_completo']}")
+                        threading.Thread(target=scraper_sigloc.job, args=(p,)).start()
                     
-                    schedule.every().day.at("00:01").do(monthly_check)
-                    add_log("Agendamento Mensal: Todo dia 01 às 00:01")
-                else:
-                    # Diário: Comportamento normal
-                    schedule.every().day.at(hora).do(scraper_sigloc.job)
-                    add_log(f"Agendamento Diário: Todos os dias às {hora}")
-                
-                last_config_hash = current_hash
+                    # Verifica se deve rodar a tarefa diária (No horário agendado)
+                    elif agora_str == p.get('hora_execucao', '08:00'):
+                        # Evita rodar várias vezes no mesmo minuto
+                        # Aqui poderíamos adicionar um lock ou controle de 'last_run' no banco
+                        add_log(f"Disparo agendado para: {p['nome_completo']}")
+                        threading.Thread(target=scraper_sigloc.job, args=(p,)).start()
             
-            schedule.run_pending()
         except Exception as e:
-            add_log(f"Erro no scheduler: {e}")
-        time.sleep(10)
+            add_log(f"Erro no scheduler cloud: {e}")
+        time.sleep(60) # Checa a cada minuto
 
 # Inicia o scheduler em uma thread separada
-threading.Thread(target=run_scheduler, daemon=True).start()
+threading.Thread(target=run_scheduler_v2, daemon=True).start()
 
-@app.get("/api/config")
-def get_config():
-    return scraper_sigloc.carregar_config()
+# --- ROTAS DE AUTENTICAÇÃO ---
+@app.post("/api/auth/register")
+def register(data: UserRegister):
+    auth_url = f"{SUPABASE_URL}/auth/v1/signup"
+    headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
+    payload = {
+        "email": data.email, 
+        "password": data.password, 
+        "data": {"full_name": data.full_name}
+    }
+    
+    r = requests.post(auth_url, json=payload, headers=headers)
+    if r.status_code == 200:
+        res_auth = r.json()
+        user_id = res_auth['id']
+        # Criar/Atualizar perfil com dados adicionais
+        db_url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}"
+        db_headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+        db_payload = {
+            "congregacao": data.congregacao,
+            "grupo_sigloc": data.grupo_sigloc
+        }
+        requests.patch(db_url, json=db_payload, headers=db_headers)
+        return {"status": "success", "user": res_auth}
+    return HTTPException(status_code=r.status_code, detail=r.text)
 
-@app.post("/api/config")
-def update_config(data: ConfigUpdate):
-    config = scraper_sigloc.carregar_config()
-    config["hora_execucao"] = data.hora_execucao
-    config["destinatario"] = data.destinatario
-    config["usuario"] = data.usuario
-    config["senha"] = data.senha
-    config["frequencia"] = data.frequencia
-    config["msg_vazio"] = data.msg_vazio
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
-    add_log(f"Configuração atualizada! Frequência: {data.frequencia}")
+@app.post("/api/auth/login")
+def login(data: UserLogin):
+    auth_url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
+    headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
+    r = requests.post(auth_url, json=data.model_dump(), headers=headers)
+    if r.status_code == 200:
+        return r.json()
+    raise HTTPException(status_code=401, detail="Credenciais inválidas")
+
+# --- ROTAS DE PROTEGIDAS (VIA HEADER AUTHORIZATION) ---
+def get_user_id(authorization: Optional[str] = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.replace("Bearer ", "")
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {token}"}
+    r = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
+    if r.status_code == 200:
+        return r.json()['id']
+    raise HTTPException(status_code=401)
+
+@app.get("/api/profile")
+def get_profile(user_id: str = scraper_sigloc.depends(get_user_id) if hasattr(scraper_sigloc, 'depends') else None):
+    # Fallback simples para o user_id se o depends falhar na sintaxe (ajustando abaixo)
+    pass
+
+@app.get("/api/profile")
+def get_profile(authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
+    return r.json()[0] if r.json() else {}
+
+@app.post("/api/profile")
+def update_profile(data: ProfileUpdate, authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+    r = requests.patch(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}", json=data.model_dump(), headers=headers)
+    add_log(f"Perfil de {uid} atualizado.")
     return {"status": "success"}
 
 @app.get("/api/logs")
@@ -90,41 +154,51 @@ def get_logs():
     return {"logs": LOG_BUFFER}
 
 @app.post("/api/run-now")
-def run_now(background_tasks: BackgroundTasks):
-    add_log("Disparando execução manual...")
-    background_tasks.add_task(scraper_sigloc.job)
-    return {"status": "started"}
+def run_now(background_tasks: BackgroundTasks, authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    # Busca o perfil completo para rodar a job
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
+    if r.status_code == 200 and r.json():
+        p = r.json()[0]
+        add_log(f"Execução manual disparada por {p['nome_completo']}")
+        background_tasks.add_task(scraper_sigloc.job, p)
+        return {"status": "started"}
+    return {"status": "error"}
 
 @app.get("/api/whatsapp/status")
-def get_whatsapp_status():
-    config = scraper_sigloc.carregar_config()
-    # No Evolution GO o status real de conexao fica em /instance/status
-    url = f"{config['evo_url']}/instance/status?instance={config['evo_instance']}"
-    headers = {"apikey": config['evo_apikey']}
+def get_whatsapp_status(authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
+    p = r.json()[0]
+    
+    if not p.get('evo_url'): return {"status": "NOT_CONFIGURED"}
+
+    url = f"{p['evo_url']}/instance/status?instance={p['evo_instance']}"
+    h = {"apikey": p['evo_apikey']}
     try:
-        r = requests.get(url, headers=headers, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            # Se Connected for True e LoggedIn for True, está tudo ok
-            is_connected = data.get("data", {}).get("Connected", False)
+        req = requests.get(url, headers=h, timeout=5)
+        if req.status_code == 200:
+            is_connected = req.json().get("data", {}).get("Connected", False)
             return {"status": "CONNECTED" if is_connected else "OFFLINE"}
         return {"status": "OFFLINE"}
     except:
         return {"status": "ERROR"}
 
 @app.post("/api/whatsapp/connect")
-def connect_whatsapp():
-    config = scraper_sigloc.carregar_config()
-    # Primeiro verifica o QR
-    url = f"{config['evo_url']}/instance/qr?instance={config['evo_instance']}"
-    headers = {"apikey": config['evo_apikey']}
+def connect_whatsapp(authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
+    p = r.json()[0]
+
+    url = f"{p['evo_url']}/instance/qr?instance={p['evo_instance']}"
+    h = {"apikey": p['evo_apikey']}
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        if r.status_code == 200 and "data" in data:
-            # Algumas versoes do Go retornam o base64 direto em data
-            return {"base64": data["data"] if isinstance(data["data"], str) else ""}
-        return data
+        req = requests.get(url, headers=h, timeout=10)
+        data = req.json()
+        return {"base64": data.get("data", "")}
     except Exception as e:
         return {"error": str(e)}
 

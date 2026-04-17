@@ -16,11 +16,83 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+import os
+import schedule
+from datetime import datetime
 
-def carregar_config():
-    with open(CONFIG_FILE, "r") as f:
-        return json.load(f)
+# CONFIGURAÇÕES SUPABASE (REST API)
+SUPABASE_URL = "https://kkgyzdwfemhsbonoozej.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrZ3l6ZHdmZW1oc2Jvbm9vemVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MjUxNjksImV4cCI6MjA5MjAwMTE2OX0.zmrD8OFZH_KvJZ2-RmmY-9TyFKrz0kzhomPHK6_3TTw"
+
+def db_save_aniversariantes(user_id, lista, tipo):
+    """Salva a lista no Supabase usando UPSERT (evita duplicados via índice único)"""
+    url = f"{SUPABASE_URL}/rest/v1/aniversariantes"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates"
+    }
+    
+    payload = []
+    for item in lista:
+        # Extrair dia/mes da string DD/MM/YYYY
+        partes = item['data'].split('/')
+        if len(partes) >= 2:
+            payload.append({
+                "user_id": user_id,
+                "nome": item['nome'],
+                "dia": int(partes[0]),
+                "mes": int(partes[1]),
+                "tipo": tipo,
+                "tempo": item['tempo'],
+                "data_full": item['data']
+            })
+            
+    if not payload: return
+    
+    try:
+        # O parâmetro on_conflict precisa dos nomes das colunas que compõem o índice único
+        res = requests.post(f"{url}?on_conflict=user_id,nome,dia,mes,tipo", json=payload, headers=headers)
+        if res.status_code not in [200, 201]:
+            print(f"[ERR DB] Erro ao salvar {tipo}: {res.status_code} - {res.text}")
+    except Exception as e:
+        print(f"[ERR DB] Falha crítica de conexão: {e}")
+
+def db_get_aniversariantes_hoje(user_id):
+    """Busca no banco os aniversariantes do dia atual"""
+    hoje = datetime.now()
+    url = f"{SUPABASE_URL}/rest/v1/aniversariantes"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    params = {
+        "user_id": f"eq.{user_id}",
+        "dia": f"eq.{hoje.day}",
+        "mes": f"eq.{hoje.month}",
+        "select": "*"
+    }
+    
+    try:
+        res = requests.get(url, headers=headers, params=params)
+        if res.status_code == 200:
+            dados = res.json()
+            # Mapear de volta para o formato esperado pelo formatador
+            vivos = [{"nome": d['nome'], "data": d['data_full'], "tempo": d['tempo']} for d in dados if d['tipo'] == 'aniversario']
+            casam = [{"nome": d['nome'], "data": d['data_full'], "tempo": d['tempo']} for d in dados if d['tipo'] == 'bodas']
+            return vivos, casam
+    except Exception as e:
+        print(f"[ERR DB] Erro ao buscar dados de hoje: {e}")
+    return [], []
+
+def carregar_config_local():
+    # Mantemos para compatibilidade ou fallback se necessário
+    CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
 def criar_driver(headless=True):
     opts = Options()
@@ -153,33 +225,61 @@ def extrair_lista(driver, titulo_texto: str):
         driver.save_screenshot(f"erro_fatal_{titulo_texto.replace(' ', '_')}.png")
         return []
 
-def job():
-    config = carregar_config()
-    print(f"\n[EXEC] Iniciando tarefa: {datetime.now().strftime('%H:%M:%S')}")
+def job(profile=None):
+    # Se não passar perfil, tenta carregar o local (legado)
+    config = profile if profile else carregar_config_local()
+    if not config: 
+        print("[!] Erro: Nenhum perfil ou config.json encontrado.")
+        return
+
+    user_id = config.get('id') or config.get('user_id')
+    frequencia = config.get('frequencia', 'diario')
+    print(f"\n[EXEC] Iniciando tarefa ({frequencia.upper()}): {datetime.now().strftime('%H:%M:%S')}")
     
+    # LÓGICA DIÁRIA: TENTA LER DO BANCO PRIMEIRO
+    if frequencia == "diario" and user_id:
+        print("[->] Modo Diário: Buscando aniversariantes de hoje no banco de dados...")
+        aniv_vivos, aniv_casam = db_get_aniversariantes_hoje(user_id)
+        
+        # Se encontrou algo ou se é para mandar a msg de vazio, prossegue
+        if aniv_vivos or aniv_casam or config.get('msg_vazio'):
+            msg = formatar_mensagem(aniv_vivos, aniv_casam, "diario", config.get('msg_vazio', ''))
+            sucesso = enviar_whatsapp(msg, config)
+            print(f"[OK] Disparo diário via DB concluído. WhatsApp: {sucesso}")
+            return # Fim da tarefa diária eficiente
+
+    # LÓGICA MENSAL (OU FALLBACK): SCRAPER COMPLETO
+    print("[->] Iniciando raspagem completa no SIGLOC...")
     driver = None
     try:
-        driver = criar_driver(headless=config['headless'])
+        driver = criar_driver(headless=config.get('headless', True))
         driver.get("https://www.sigloc.com.br/login/")
         
-        WebDriverWait(driver, config['timeout']).until(EC.presence_of_element_located((By.NAME, "grupo")))
-        driver.find_element(By.NAME, "grupo").send_keys(config['grupo'])
-        driver.find_element(By.NAME, "email").send_keys(config['usuario'])
-        driver.find_element(By.NAME, "senha").send_keys(config['senha'])
+        timeout = config.get('timeout', 20)
+        WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.NAME, "grupo")))
+        driver.find_element(By.NAME, "grupo").send_keys(config['grupo_sigloc'])
+        driver.find_element(By.NAME, "email").send_keys(config['sigloc_email'])
+        driver.find_element(By.NAME, "senha").send_keys(config['sigloc_senha'])
         driver.find_element(By.CSS_SELECTOR, "input.btn-success").click()
         
-        WebDriverWait(driver, config['timeout']).until(lambda d: "index.php" in d.current_url or "sigloc" in d.current_url)
+        WebDriverWait(driver, timeout).until(lambda d: "index.php" in d.current_url or "sigloc" in d.current_url)
         
-        # Vai direto para o dashboard de aniversariantes
         driver.get("https://www.sigloc.com.br/sigloc/index.php/siglocig")
-        time.sleep(10) # Tempo extra para carregar widgets dinâmicos
+        time.sleep(10)
         
         aniv_mes = extrair_lista(driver, "Aniversariantes do Mês")
         aniv_casam = extrair_lista(driver, "Aniversariantes de Casamento")
         
-        msg = formatar_mensagem(aniv_mes, aniv_casam, config.get('frequencia', 'diario'), config.get('msg_vazio', ''))
+        # SALVAR NO BANCO SE TIVER USER_ID
+        if user_id:
+            db_save_aniversariantes(user_id, aniv_mes, "aniversario")
+            db_save_aniversariantes(user_id, aniv_casam, "bodas")
+            print("[OK] Dados sincronizados com o banco de dados.")
+
+        # FINALIZAR ENVIO
+        msg = formatar_mensagem(aniv_mes, aniv_casam, frequencia, config.get('msg_vazio', ''))
         sucesso = enviar_whatsapp(msg, config)
-        print(f"[OK] Tarefa concluída. WhatsApp enviado: {sucesso}")
+        print(f"[OK] Tarefa via raspagem concluída. WhatsApp enviado: {sucesso}")
     except Exception as e:
         erro = f"⚠️ *FALHA:* {str(e)}"
         print(erro)
