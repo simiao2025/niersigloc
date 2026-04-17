@@ -10,16 +10,20 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 import scraper_sigloc
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente
+load_dotenv()
 
 app = FastAPI(title="Niarsigloc Cloud")
 
 # CONFIGURAÇÕES SUPABASE
-SUPABASE_URL = scraper_sigloc.SUPABASE_URL
-SUPABASE_KEY = scraper_sigloc.SUPABASE_KEY
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # CONFIGURAÇÕES EVOLUTION CENTRALIZADA
-CENTRAL_EVO_URL = "https://evolution-api.brasilonthebox.shop"
-CENTRAL_EVO_KEY = "0ec391ec-4732-4934-9ef3-d262a11cb933"
+CENTRAL_EVO_URL = os.getenv("CENTRAL_EVO_URL")
+CENTRAL_EVO_KEY = os.getenv("CENTRAL_EVO_KEY")
 
 # MODELOS
 class UserRegister(BaseModel):

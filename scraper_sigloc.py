@@ -8,6 +8,10 @@ import requests
 import os
 import schedule
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente do arquivo .env
+load_dotenv()
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
@@ -21,8 +25,8 @@ import schedule
 from datetime import datetime
 
 # CONFIGURAÇÕES SUPABASE (REST API)
-SUPABASE_URL = "https://kkgyzdwfemhsbonoozej.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrZ3l6ZHdmZW1oc2Jvbm9vemVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MjUxNjksImV4cCI6MjA5MjAwMTE2OX0.zmrD8OFZH_KvJZ2-RmmY-9TyFKrz0kzhomPHK6_3TTw"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def db_save_aniversariantes(user_id, lista, tipo):
     """Salva a lista no Supabase usando UPSERT (evita duplicados via índice único)"""
