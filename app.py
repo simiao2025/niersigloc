@@ -111,29 +111,57 @@ def register(data: UserRegister):
         "data": {"full_name": data.full_name}
     }
     
-    r = requests.post(auth_url, json=payload, headers=headers)
-    if r.status_code == 200:
-        res_auth = r.json()
-        user_id = res_auth['id']
-        # Criar/Atualizar perfil com dados adicionais
-        db_url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}"
-        db_headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
-        db_payload = {
-            "congregacao": data.congregacao,
-            "grupo_sigloc": data.grupo_sigloc
-        }
-        requests.patch(db_url, json=db_payload, headers=db_headers)
-        return {"status": "success", "user": res_auth}
-    return HTTPException(status_code=r.status_code, detail=r.text)
+    try:
+        r = requests.post(auth_url, json=payload, headers=headers)
+        print(f"[DEBUG REG] Signup Status: {r.status_code}")
+        
+        if r.status_code in [200, 201]:
+            res_auth = r.json()
+            user_id = res_auth['id']
+            
+            # Aguarda um breve momento para o trigger criar o profile (opcional mas seguro)
+            time.sleep(0.5)
+            
+            # Criar/Atualizar perfil com dados adicionais
+            db_url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}"
+            db_headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+            db_payload = {
+                "congregacao": data.congregacao,
+                "grupo_sigloc": data.grupo_sigloc,
+                "nome_completo": data.full_name
+            }
+            res_db = requests.patch(db_url, json=db_payload, headers=db_headers)
+            print(f"[DEBUG REG] Profile Update Status: {res_db.status_code}")
+            
+            return {"status": "success", "user": res_auth}
+        
+        # Erro no signup
+        err_msg = r.json().get("msg") or r.text
+        print(f"[ERR REG] {err_msg}")
+        raise HTTPException(status_code=400, detail=err_msg)
+        
+    except Exception as e:
+        print(f"[ERR REG] Falha crítica: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auth/login")
 def login(data: UserLogin):
     auth_url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
     r = requests.post(auth_url, json=data.model_dump(), headers=headers)
+    print(f"[DEBUG AUTH] Supabase Response: {r.status_code} - {r.text}")
+    
     if r.status_code == 200:
         return r.json()
-    raise HTTPException(status_code=401, detail="Credenciais inválidas")
+    
+    # Captura a mensagem de erro real do Supabase
+    error_detail = "Credenciais inválidas"
+    try:
+        error_json = r.json()
+        error_detail = error_json.get("error_description") or error_json.get("msg") or error_detail
+    except: pass
+    
+    raise HTTPException(status_code=401, detail=error_detail)
 
 # --- ROTAS DE PROTEGIDAS (VIA HEADER AUTHORIZATION) ---
 def get_user_id(authorization: Optional[str] = Header(None)):

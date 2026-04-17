@@ -211,6 +211,7 @@
         async function login() {
             const email = document.getElementById('login-email').value;
             const password = document.getElementById('login-pass').value;
+            if(!email || !password) return alert('Preecha todos os campos');
             
             try {
                 const res = await fetch('/api/auth/login', {
@@ -224,9 +225,9 @@
                     localStorage.setItem('niarsigloc_token', TOKEN);
                     loadDashboard();
                 } else {
-                    alert(data.detail || 'Falha no login');
+                    alert('Erro no Login: ' + (data.detail || 'E-mail ou senha incorretos. Verifique se o e-mail foi confirmado.'));
                 }
-            } catch(e) { alert('Erro de conexão'); }
+            } catch(e) { alert('Erro de conexão com o servidor'); }
         }
 
         async function register() {
@@ -238,18 +239,22 @@
                 grupo_sigloc: document.getElementById('reg-group').value
             };
             
-            const res = await fetch('/api/auth/register', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            });
-            if(res.ok) {
-                alert('Conta criada com sucesso! Faça login.');
-                showView('login');
-            } else {
+            if(!payload.email || !payload.password || !payload.full_name) return alert('Preencha os dados obrigatórios');
+
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
                 const data = await res.json();
-                alert(data.detail || 'Erro ao criar conta');
-            }
+                if(res.ok) {
+                    alert('Cadastro realizado! Agora você já pode entrar.');
+                    showView('login');
+                } else {
+                    alert('Falha no Cadastro: ' + (data.detail || 'Verifique os dados e tente novamente.'));
+                }
+            } catch(e) { alert('Erro de conexão ao registrar'); }
         }
 
         function logout() {
@@ -299,35 +304,31 @@
 
         async function updateProfile() {
             const payload = {
-                congregacao: document.getElementById('reg-cong') ? document.getElementById('reg-cong').value : PROFILE.congregacao,
-                grupo_sigloc: document.getElementById('dash-sigloc-email') ? document.getElementById('dash-sigloc-email').value : '', // Simplified for now
                 sigloc_email: document.getElementById('dash-sigloc-email').value,
                 sigloc_senha: document.getElementById('dash-sigloc-pass').value,
                 target_phone: document.getElementById('dash-phone').value,
                 hora_execucao: document.getElementById('dash-time').value,
                 frequencia: document.getElementById('dash-freq').value,
                 msg_vazio: document.getElementById('dash-msg-vazio').value,
-                evo_url: document.getElementById('dash-evo-url').value,
-                evo_instance: document.getElementById('dash-evo-instance').value,
-                evo_apikey: document.getElementById('dash-evo-key').value,
-                // Mantendo congregacao e grupo que vieram do profile se nao estiverem no form
                 congregacao: PROFILE.congregacao,
-                grupo_sigloc: document.getElementById('dash-sigloc-email').value ? PROFILE.grupo_sigloc : PROFILE.grupo_sigloc
+                grupo_sigloc: PROFILE.grupo_sigloc,
+                evo_url: PROFILE.evo_url || '',
+                evo_instance: PROFILE.evo_instance || '',
+                evo_apikey: PROFILE.evo_apikey || ''
             };
             
-            // Correction logic for congregacao/grupo
-            payload.congregacao = PROFILE.congregacao;
-            payload.grupo_sigloc = PROFILE.grupo_sigloc;
-
-            const res = await fetch('/api/profile', {
-                method: 'POST',
-                headers: {
-                    'Authorization': 'Bearer ' + TOKEN,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload)
-            });
-            if(res.ok) alert('Configurações salvas!');
+            try {
+                const res = await fetch('/api/profile', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + TOKEN,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if(res.ok) alert('Configurações salvas!');
+                else alert('Erro ao salvar perfil');
+            } catch(e) { alert('Erro de rede ao salvar'); }
         }
 
         async function runNow() {
@@ -399,8 +400,13 @@
         }
 
         // INIT
-        if(TOKEN) loadDashboard();
-        else showView('login');
+        try {
+            if(TOKEN) loadDashboard();
+            else showView('login');
+        } catch(e) {
+            console.error(e);
+            showView('login');
+        }
 
     </script>
 </body>
