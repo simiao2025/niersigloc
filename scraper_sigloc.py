@@ -1,17 +1,16 @@
-"""
-Automação SIGLOC — Versão Integrada com Interface Web
-"""
-
 import json
 import time
 import requests
 import os
 import schedule
+import re
+import unicodedata
 from datetime import datetime
 from dotenv import load_dotenv
 
 # Carrega variáveis de ambiente do arquivo .env
 load_dotenv()
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
@@ -19,10 +18,6 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-
-import os
-import schedule
-from datetime import datetime
 
 # CONFIGURAÇÕES SUPABASE (REST API)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -90,13 +85,6 @@ def db_get_aniversariantes_hoje(user_id):
         print(f"[ERR DB] Erro ao buscar dados de hoje: {e}")
     return [], []
 
-def carregar_config_local():
-    # Mantemos para compatibilidade ou fallback se necessário
-    CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {}
 
 def criar_driver(headless=True):
     opts = Options()
@@ -230,11 +218,11 @@ def extrair_lista(driver, titulo_texto: str):
         return []
 
 def job(profile=None):
-    # Se não passar perfil, tenta carregar o local (legado)
-    config = profile if profile else carregar_config_local()
-    if not config: 
-        print("[!] Erro: Nenhum perfil ou config.json encontrado.")
+    if not profile: 
+        print("[!] Erro: Nenhum perfil fornecido para a tarefa.")
         return
+    
+    config = profile
 
     user_id = config.get('id') or config.get('user_id')
     frequencia = config.get('frequencia', 'diario')
