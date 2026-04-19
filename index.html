@@ -71,8 +71,8 @@
         .log-entry { margin-bottom: 0.2rem; }
         .log-time { color: var(--text-dim); margin-right: 8px; }
 
-        #qr-container { background: white; padding: 10px; border-radius: 12px; margin: 15px 0; width: 160px; height: 160px; display: none; }
-        #qr-container img { width: 100%; height: 100%; }
+        #qr-container { background: white; padding: 10px; border-radius: 12px; margin: 15px 0; width: auto; min-width: 250px; height: auto; display: none; }
+        #qr-container img { width: 250px; height: 250px; display: block; margin: 0 auto; }
 
         @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } .console { grid-column: span 1; } }
     </style>
@@ -146,7 +146,7 @@
     <!-- VIEW: DASHBOARD -->
     <section id="view-dashboard" class="view-section">
         <header>
-            <div class="logo">Niarsigloc <span style="font-weight: 300; opacity: 0.5;">DASHBOARD</span></div>
+            <div class="logo" id="dash-logo">Niarsigloc <span style="font-weight: 300; opacity: 0.5;">v2</span></div>
             <div style="display: flex; align-items: center; gap: 1rem;">
                 <div id="connection-status" class="status-badge status-offline">OFFLINE</div>
                 <button class="btn btn-outline" style="padding: 0.4rem 0.8rem; width: auto; font-size: 0.8rem;" onclick="logout()">Sair</button>
@@ -173,6 +173,7 @@
                     <label>WhatsApp Destino (Resumo)</label>
                     <input type="text" id="dash-phone" placeholder="5563912345678">
                 </div>
+                
                 <div class="form-group" style="margin-top: 0.5rem;">
                     <label>Mensagem fallback (Dias vazios)</label>
                     <textarea id="dash-msg-vazio" style="height: 60px; resize: none;" placeholder="Frase para quando não houver aniversariantes..."></textarea>
@@ -194,7 +195,7 @@
             </div>
 
             <div class="card console" id="log-list">
-                <div class="log-entry"><span class="log-time">HH:MM</span> Iniciando logs do sistema cloud...</div>
+                <div class="log-entry"><span class="log-time">HH:MM</span> Iniciando logs do sistema cloud v3.3...</div>
             </div>
         </div>
     </section>
@@ -203,6 +204,62 @@
         const API_URL = '';
         let TOKEN = localStorage.getItem('niarsigloc_token');
         let PROFILE = null;
+        let LOG_INTERVAL = null;
+        let STATUS_INTERVAL = null;
+
+        async function disconnect_whatsapp() {
+            if(!confirm('Deseja realmente desconectar o WhatsApp?')) return;
+            try {
+                const res = await fetch('/api/whatsapp/disconnect', {
+                    method: 'POST',
+                    headers: {'Authorization': 'Bearer ' + TOKEN}
+                });
+                if(res.ok) {
+                    alert('Desconectado com sucesso!');
+                    checkStatus();
+                }
+            } catch(e) { alert('Erro ao desconectar'); }
+        }
+
+        async function handleConnection() {
+            const btn = document.getElementById('qr-btn');
+            if(btn.innerText.includes('Desconectar')) {
+                return disconnect_whatsapp();
+            }
+            
+            // TRAVA v3.7: Evita cliques múltiplos
+            btn.disabled = true;
+            btn.innerText = '⌛ Gerando QR...';
+            
+            const container = document.getElementById('qr-container');
+            container.style.display = 'block';
+            container.innerHTML = '<p style="color:var(--primary)">Solicitando ao servidor... Aguarde.</p>';
+            
+            try {
+                const res = await fetch('/api/whatsapp/connect', {
+                    method: 'POST',
+                    headers: {'Authorization': 'Bearer ' + TOKEN}
+                });
+                const data = await res.json();
+                
+                if(data.base64) {
+                    container.innerHTML = `<img src="${data.base64}" style="width:250px; border-radius:10px; border: 5px solid white;">`;
+                    document.getElementById('qr-status-text').innerText = 'Aponte o WhatsApp para o QR Code acima.';
+                    btn.innerText = 'Atualizar QR Code';
+                } else if(data.message === 'Já conectado') {
+                    alert('Sua instância já está conectada!');
+                    checkStatus();
+                } else {
+                    container.innerHTML = `<p style="color:red">Erro: ${data.msg || 'Tente novamente.'}</p>`;
+                    btn.innerText = 'Tentar Novamente';
+                }
+            } catch(e) {
+                container.innerHTML = '<p style="color:red">Erro de comunicação.</p>';
+                btn.innerText = 'Vincular WhatsApp';
+            } finally {
+                btn.disabled = false;
+            }
+        }
 
         // AUTH FUNCTIONS
         async function login() {
@@ -222,7 +279,7 @@
                     localStorage.setItem('niarsigloc_token', TOKEN);
                     loadDashboard();
                 } else {
-                    alert('Erro no Login: ' + (data.detail || 'E-mail ou senha incorretos. Verifique se o e-mail foi confirmado.'));
+                    alert('Erro no Login: ' + (data.detail || 'E-mail ou senha incorretos.'));
                 }
             } catch(e) { alert('Erro de conexão com o servidor'); }
         }
@@ -257,10 +314,11 @@
         function logout() {
             localStorage.removeItem('niarsigloc_token');
             TOKEN = null;
+            if (LOG_INTERVAL) clearInterval(LOG_INTERVAL);
+            if (STATUS_INTERVAL) clearInterval(STATUS_INTERVAL);
             showView('login');
         }
 
-        // VIEW ROUTING
         function showView(view) {
             document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
             document.getElementById('view-' + view).classList.add('active');
@@ -271,7 +329,6 @@
             document.getElementById('dash-time-container').style.display = (freq === 'diario') ? 'block' : 'none';
         }
 
-        // DASHBOARD LOGIC
         async function loadDashboard() {
             if(!TOKEN) return showView('login');
             
@@ -281,14 +338,12 @@
             if(!res.ok) return logout();
             
             const p = await res.json();
-            if(!p || Object.keys(p).length === 0) {
-                console.warn('Perfil vazio ou não encontrado');
-                PROFILE = {};
-            } else {
-                PROFILE = p;
-            }
+            PROFILE = p || {};
             
-            // Fill Fields (with safety)
+            // v3.0: Branding Personalizado - [CONGREGAÇÃO] - [NOME]
+            const congregacao = (PROFILE.congregacao || '').toUpperCase();
+            const nome = PROFILE.nome_completo || '';
+            document.getElementById('dash-logo').innerHTML = `${congregacao} - ${nome}`;
             document.getElementById('dash-freq').value = PROFILE.frequencia || 'diario';
             document.getElementById('dash-time').value = PROFILE.hora_execucao || '08:00';
             document.getElementById('dash-phone').value = PROFILE.target_phone || '';
@@ -301,19 +356,16 @@
 
         async function updateProfile() {
             const payload = {
-                target_phone: document.getElementById('dash-phone').value,
-                hora_execucao: document.getElementById('dash-time').value,
                 frequencia: document.getElementById('dash-freq').value,
+                hora_execucao: document.getElementById('dash-time').value,
+                target_phone: document.getElementById('dash-phone').value,
                 msg_vazio: document.getElementById('dash-msg-vazio').value
             };
             
             try {
                 const res = await fetch('/api/profile', {
                     method: 'POST',
-                    headers: {
-                        'Authorization': 'Bearer ' + TOKEN,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: {'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
                 });
                 if(res.ok) alert('Configurações salvas!');
@@ -326,12 +378,13 @@
                 method: 'POST',
                 headers: {'Authorization': 'Bearer ' + TOKEN}
             });
-            alert('Execução disparada!');
+            alert('Execução disparada! Acompanhe os logs abaixo.');
         }
 
         async function fetchLogs() {
             if(!TOKEN) return;
             const r = await fetch('/api/logs');
+            if(r.status === 401) return logout();
             const data = await r.json();
             const list = document.getElementById('log-list');
             list.innerHTML = data.logs.map(log => {
@@ -348,55 +401,50 @@
             const res = await fetch('/api/whatsapp/status', {
                 headers: {'Authorization': 'Bearer ' + TOKEN}
             });
+            if(res.status === 401) return logout();
+            
             const data = await res.json();
             const badge = document.getElementById('connection-status');
             const btn = document.getElementById('qr-btn');
+            const qrContainer = document.getElementById('qr-container');
+            const statusText = document.getElementById('qr-status-text');
             
-            if(data.status === 'CONNECTED') {
+            if(data.status === 'open') {
                 badge.className = 'status-badge status-online';
                 badge.innerText = 'CONECTADO';
-                btn.innerText = 'WhatsApp Conectado';
-                btn.style.background = 'rgba(255,255,255,0.05)';
+                btn.innerText = 'Desconectar WhatsApp';
+                btn.style.background = '#ff4444';
                 btn.style.color = '#fff';
+                btn.onclick = disconnect_whatsapp;
+                qrContainer.style.display = 'none';
+                statusText.innerText = '✅ Seu WhatsApp está vinculado e pronto!';
             } else {
                 badge.className = 'status-badge status-offline';
                 badge.innerText = 'OFFLINE';
-                btn.innerText = 'Vincular WhatsApp';
-                btn.style.background = 'var(--accent)';
-                btn.style.color = '#000';
-            }
-        }
-
-        async function handleConnection() {
-            const btn = document.getElementById('qr-btn');
-            const container = document.getElementById('qr-container');
-            btn.innerText = 'Gerando...';
-            
-            const res = await fetch('/api/whatsapp/connect', {
-                method: 'POST',
-                headers: {'Authorization': 'Bearer ' + TOKEN}
-            });
-            const data = await res.json();
-            if(data.base64) {
-                container.innerHTML = `<img src="${data.base64}">`;
-                container.style.display = 'block';
-                btn.innerText = 'Atualizar QR';
+                
+                // Só muda o botão de volta se não estivermos exibindo um QR Code ativo
+                if(!qrContainer.innerHTML.includes('img')) {
+                    btn.innerText = 'Vincular WhatsApp';
+                    btn.style.background = 'var(--accent)';
+                    btn.style.color = '#000';
+                    btn.onclick = handleConnection;
+                    statusText.innerText = 'WhatsApp desconectado.';
+                }
             }
         }
 
         function startRefreshLoops() {
-            setInterval(fetchLogs, 4000);
-            setInterval(checkStatus, 6000);
+            if (LOG_INTERVAL) clearInterval(LOG_INTERVAL);
+            if (STATUS_INTERVAL) clearInterval(STATUS_INTERVAL);
+            fetchLogs();
+            checkStatus();
+            LOG_INTERVAL = setInterval(fetchLogs, 5000);
+            STATUS_INTERVAL = setInterval(checkStatus, 5000);
         }
 
         // INIT
-        try {
-            if(TOKEN) loadDashboard();
-            else showView('login');
-        } catch(e) {
-            console.error(e);
-            showView('login');
-        }
+        if(TOKEN) loadDashboard();
+        else showView('login');
 
     </script>
 </body>

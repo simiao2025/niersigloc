@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: niersigloc-api
+    env: docker
+    plan: free # Ou a sua escolha
+    dockerContext: .
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: PORT
+        value: 8080
+      # As chaves abaixo devem ser configuradas no painel do Render por segurança:
+      # SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_ROLE_KEY, CENTRAL_EVO_URL, CENTRAL_EVO_KEY

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 import scraper_sigloc
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Carrega variáveis de ambiente
@@ -20,10 +21,18 @@ app = FastAPI(title="Niarsigloc Cloud")
 # CONFIGURAÇÕES SUPABASE
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or SUPABASE_KEY
 
 # CONFIGURAÇÕES EVOLUTION CENTRALIZADA
 CENTRAL_EVO_URL = os.getenv("CENTRAL_EVO_URL")
 CENTRAL_EVO_KEY = os.getenv("CENTRAL_EVO_KEY")
+
+# v3.9: Hardening de Conexão
+DEFAULT_TIMEOUT = 12
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "apikey": CENTRAL_EVO_KEY
+}
 
 # MODELOS
 class UserRegister(BaseModel):
@@ -55,88 +64,142 @@ def slugify(text):
 
 def add_log(msg):
     global LOG_BUFFER
-    timestamp = scraper_sigloc.datetime.now().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime("%H:%M:%S")
     LOG_BUFFER.append(f"[{timestamp}] {msg}")
     if len(LOG_BUFFER) > 50:
         LOG_BUFFER.pop(0)
 
+# HELPER: Mapeamento de Status Evolution Go (v1.0)
+def map_evo_status(raw_state):
+    state = str(raw_state or "OFFLINE").lower()
+    # v1.0 retorna booleano 'connected' em alguns endpoints, tratamos aqui
+    if raw_state is True or state in ["open", "connected", "true"]: return "CONNECTED"
+    if state in ["connecting"]: return "CONNECTING"
+    return "OFFLINE"
+
+# v3.12: Helper para Sincronizar Token e URL da Evolution Central
+def sync_evo_data(user_id, instance_name, auth_token=None):
+    """Buscamos a instância no servidor central e salvamos o token real no Supabase."""
+    print(f"[SYNC] Sincronizando instância: {instance_name}")
+    try:
+        r = requests.get(f"{CENTRAL_EVO_URL}/instance/all", headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            # Encontra a instância na lista do servidor
+            match = next((i for i in data if i.get("name") == instance_name), None)
+            if match:
+                token = match.get("token")
+                is_connected = match.get("connected", False)
+                print(f"[SYNC] Encontrado: {instance_name} | Token: {token[:8]}... | Status: {is_connected}")
+                
+                # Atualiza no Supabase
+                db_headers = {
+                    "apikey": SUPABASE_KEY, 
+                    "Authorization": f"Bearer {auth_token or SUPABASE_KEY}",
+                    "Content-Type": "application/json"
+                }
+                requests.patch(
+                    f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}",
+                    json={"evo_apikey": token, "evo_url": CENTRAL_EVO_URL},
+                    headers=db_headers,
+                    timeout=10
+                )
+                add_log(f"✅ Token sincronizado: {instance_name}")
+                return {"token": token, "connected": is_connected}
+    except Exception as e:
+        add_log(f"❌ Erro na sincronia: {str(e)}")
+        print(f"[SYNC ERRO] {e}")
+    return None
+
 def run_scheduler_v2():
-    add_log("☁️ Scheduler Multi-usuário iniciado.")
+    add_log("☁️ Scheduler v2.9 iniciado.")
     while True:
         try:
-            # Busca todos os perfis no Supabase
-            headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+            headers = {"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"}
             res = requests.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=headers)
-            
             if res.status_code == 200:
                 profiles = res.json()
-                hoje = scraper_sigloc.datetime.now()
+                hoje = datetime.now()
                 agora_str = hoje.strftime("%H:%M")
-                
                 for p in profiles:
-                    # Verifica se deve rodar a tarefa mensal (Dia 01 às 00:01)
                     if p['frequencia'] == 'mensal' and hoje.day == 1 and agora_str == '00:01':
-                        add_log(f"Iniciando tarefa mensal para: {p['nome_completo']}")
+                        add_log(f"Iniciando mensal para: {p.get('nome_completo')}")
                         threading.Thread(target=scraper_sigloc.job, args=(p,)).start()
-                    
-                    # Verifica se deve rodar a tarefa diária (No horário agendado)
                     elif agora_str == p.get('hora_execucao', '08:00'):
-                        # Evita rodar várias vezes no mesmo minuto
-                        # Aqui poderíamos adicionar um lock ou controle de 'last_run' no banco
-                        add_log(f"Disparo agendado para: {p['nome_completo']}")
+                        add_log(f"Disparo para: {p.get('nome_completo')}")
                         threading.Thread(target=scraper_sigloc.job, args=(p,)).start()
-            
         except Exception as e:
-            add_log(f"Erro no scheduler cloud: {e}")
-        time.sleep(60) # Checa a cada minuto
+            print(f"[ERR SCHED] {e}")
+        time.sleep(60)
 
-# Inicia o scheduler em uma thread separada
 threading.Thread(target=run_scheduler_v2, daemon=True).start()
 
-# --- ROTAS DE AUTENTICAÇÃO ---
+def get_profile(uid, token=None):
+    try:
+        auth_header = f"Bearer {token}" if token else f"Bearer {SUPABASE_KEY}"
+        headers = {"apikey": SUPABASE_KEY, "Authorization": auth_header}
+        url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*"
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data[0]
+        return None
+    except:
+        return None
+
 @app.post("/api/auth/register")
 def register(data: UserRegister):
     auth_url = f"{SUPABASE_URL}/auth/v1/signup"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
-    payload = {
-        "email": data.email, 
-        "password": data.password, 
-        "data": {"full_name": data.full_name}
-    }
-    
+    payload = {"email": data.email, "password": data.password, "data": {"full_name": data.full_name}}
     try:
         r = requests.post(auth_url, json=payload, headers=headers)
-        print(f"[DEBUG REG] Signup Status: {r.status_code}")
-        
+        res_auth = r.json() if r.status_code in [200, 201] else {}
         if r.status_code in [200, 201]:
-            res_auth = r.json()
-            user_id = res_auth['id']
+            user_id = res_auth.get('id') or res_auth.get('user', {}).get('id')
+            user_token = res_auth.get('access_token')
+            db_headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {user_token or SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            }
+            # v3.10: Gerar nome da instância e incluir no payload
+            instance_name = slugify(data.congregacao or data.full_name or "instancia")
             
-            # Aguarda um breve momento para o trigger criar o profile (opcional mas seguro)
-            time.sleep(0.5)
-            
-            # Criar/Atualizar perfil com dados adicionais
-            db_url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}"
-            db_headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
             db_payload = {
+                "id": user_id,
                 "congregacao": data.congregacao,
                 "grupo_sigloc": data.grupo_sigloc,
                 "nome_completo": data.full_name,
-                "sigloc_email": data.email,  # Unificação: usa o email de cadastro
-                "sigloc_senha": data.password # Unificação: usa a senha de cadastro
+                "sigloc_email": data.email,
+                "sigloc_senha": data.password,
+                "frequencia": "diario",
+                "hora_execucao": "08:00",
+                "evo_instance": instance_name  # ✅ Salva o nome da instância
             }
-            res_db = requests.patch(db_url, json=db_payload, headers=db_headers)
-            print(f"[DEBUG REG] Profile Update Status: {res_db.status_code}")
+            print(f"[DEBUG v3.10] Enviando perfil para Supabase: {user_id}")
+            r_db = requests.post(f"{SUPABASE_URL}/rest/v1/profiles", json=db_payload, headers=db_headers)
             
+            if r_db.status_code not in [200, 201]:
+                print(f"[ERRO CRÍTICO DB] STATUS: {r_db.status_code} - RES: {r_db.text}")
+            else:
+                print(f"[OK] Perfil criado. Garantindo instância Evolution: {instance_name}")
+                # v3.12: Tenta criar, se já existir (403/409), o sync resolve
+                requests.post(
+                    f"{CENTRAL_EVO_URL}/instance/create", 
+                    json={"instanceName": instance_name, "qrcode": True}, 
+                    headers=DEFAULT_HEADERS, 
+                    timeout=DEFAULT_TIMEOUT
+                )
+                # Sincroniza o token de volta para o banco (Auto-Repair)
+                sync_evo_data(user_id, instance_name, user_token)
+                
             return {"status": "success", "user": res_auth}
-        
-        # Erro no signup
-        err_msg = r.json().get("msg") or r.text
-        print(f"[ERR REG] {err_msg}")
-        raise HTTPException(status_code=400, detail=err_msg)
-        
+        raise HTTPException(status_code=r.status_code, detail=res_auth.get("msg") or r.text)
     except Exception as e:
-        print(f"[ERR REG] Falha crítica: {e}")
+        print(f"[ERRO REGISTRO] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auth/login")
@@ -144,23 +207,13 @@ def login(data: UserLogin):
     auth_url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
     r = requests.post(auth_url, json=data.model_dump(), headers=headers)
-    print(f"[DEBUG AUTH] Supabase Response: {r.status_code} - {r.text}")
-    
     if r.status_code == 200:
         return r.json()
-    
-    # Captura a mensagem de erro real do Supabase
-    error_detail = "Credenciais inválidas"
-    try:
-        error_json = r.json()
-        error_detail = error_json.get("error_description") or error_json.get("msg") or error_detail
-    except: pass
-    
-    raise HTTPException(status_code=401, detail=error_detail)
+    raise HTTPException(status_code=401, detail="Logon falhou")
 
-# --- ROTAS DE PROTEGIDAS (VIA HEADER AUTHORIZATION) ---
 def get_user_id(authorization: Optional[str] = Header(None)):
-    if not authorization: raise HTTPException(status_code=401)
+    if not authorization:
+        raise HTTPException(status_code=401)
     token = authorization.replace("Bearer ", "")
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {token}"}
     r = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers=headers)
@@ -169,131 +222,182 @@ def get_user_id(authorization: Optional[str] = Header(None)):
     raise HTTPException(status_code=401)
 
 @app.get("/api/profile")
-def get_profile(authorization: Optional[str] = Header(None)):
+def profile(authorization: Optional[str] = Header(None)):
     uid = get_user_id(authorization)
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
-    
-    if r.status_code == 200 and r.json():
-        return r.json()[0]
-    return {}
+    p = get_profile(uid, token=authorization.replace("Bearer ", ""))
+    return p or {}
 
 @app.post("/api/profile")
 def update_profile(data: ProfileUpdate, authorization: Optional[str] = Header(None)):
     uid = get_user_id(authorization)
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
-    r = requests.patch(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}", json=data.model_dump(), headers=headers)
-    add_log(f"Perfil de {uid} atualizado.")
+    headers = {"apikey": SUPABASE_KEY, "Authorization": authorization, "Content-Type": "application/json"}
+    payload = data.model_dump()
+    url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}"
+    requests.patch(url, json=payload, headers=headers)
+    add_log("Configurações atualizadas via PATCH.")
     return {"status": "success"}
+
+@app.post("/api/run-now")
+def run_now(authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    p = get_profile(uid, token=authorization.replace("Bearer ", ""))
+    if p:
+        add_log(f"🚀 Gatilho manual: {p.get('nome_completo')}")
+        threading.Thread(target=scraper_sigloc.job, args=(p,)).start()
+        return {"status": "success"}
+    raise HTTPException(status_code=404)
 
 @app.get("/api/logs")
 def get_logs():
     return {"logs": LOG_BUFFER}
 
-@app.post("/api/run-now")
-def run_now(background_tasks: BackgroundTasks, authorization: Optional[str] = Header(None)):
-    uid = get_user_id(authorization)
-    # Busca o perfil completo para rodar a job
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
-    
-    if r.status_code == 200 and r.json():
-        p = r.json()[0]
-        add_log(f"Execução manual disparada por {p.get('nome_completo', 'Usuário')}")
-        background_tasks.add_task(scraper_sigloc.job, p)
-        return {"status": "started"}
-    
-    return {"status": "error", "message": "Perfil não encontrado"}
+# ─────────────────────────────────────────────────────────────
+#  WHATSAPP — Funções corrigidas para Evolution GO
+# ─────────────────────────────────────────────────────────────
 
 @app.get("/api/whatsapp/status")
 def get_whatsapp_status(authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    token = authorization.replace("Bearer ", "") if authorization else None
     try:
-        uid = get_user_id(authorization)
-        headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-        r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
-        
-        if r.status_code != 200 or not r.json():
-            return {"status": "DISCONNECTED", "message": "Perfil não encontrado"}
-            
-        p = r.json()[0]
-        instance = p.get('evo_instance')
-        
-        if not instance:
-            return {"status": "DISCONNECTED", "message": "Instância não criada"}
+        p = get_profile(uid, token=token)
+        if not p or not p.get("evo_instance"):
+            return {"status": "disconnected"}
 
-        # Consulta o servidor central da Evolution
-        url = f"{CENTRAL_EVO_URL}/instance/connectionStatus/{instance}"
-        h = {"apikey": CENTRAL_EVO_KEY}
+        instance_name = p.get("evo_instance")
         
-        req = requests.get(url, headers=h, timeout=10)
-        if req.status_code == 200:
-            # A Evolution API retorna {"instance": {"state": "open", ...}}
-            res_data = req.json()
-            state = res_data.get("instance", {}).get("state", "OFFLINE")
-            return {"status": "CONNECTED" if state == "open" else "OFFLINE"}
-            
-        return {"status": "OFFLINE"}
+        # v3.12: Evolution GO v1.0 - Usamos /instance/all para um check rápido de todos
+        r = requests.get(f"{CENTRAL_EVO_URL}/instance/all", headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            match = next((i for i in data if i.get("name") == instance_name), None)
+            if match and match.get("connected"):
+                return {"status": "open"}
+
+        return {"status": "disconnected"}
+
     except Exception as e:
-        print(f"[ERR STATUS] {e}")
-        return {"status": "ERROR", "detail": str(e)}
+        print(f"[ERRO status] {e}")
+        return {"status": "disconnected"}
+
 
 @app.post("/api/whatsapp/connect")
 def connect_whatsapp(authorization: Optional[str] = Header(None)):
     uid = get_user_id(authorization)
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*", headers=headers)
-    
-    if r.status_code != 200 or not r.json():
-        return {"status": "error", "message": "Perfil não encontrado"}
-        
-    p = r.json()[0]
-    instance_name = p.get('evo_instance')
-    
-    # 1. Se não tem instância, cria agora
-    if not instance_name:
-        add_log(f"Criando nova instância para {p['congregacao']}...")
-        instance_name = slugify(p['congregacao'])
-        
-        create_url = f"{CENTRAL_EVO_URL}/instance/create"
-        payload = {
-            "instanceName": instance_name,
-            "token": uid[:12], # Token opcional da instancia
-            "qrcode": True
-        }
-        res_create = requests.post(create_url, json=payload, headers={"apikey": CENTRAL_EVO_KEY})
-        
-        # Salva o nome da instância no perfil do Supabase
-        requests.patch(f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}", 
-                       json={"evo_instance": instance_name, "evo_url": CENTRAL_EVO_URL, "evo_apikey": CENTRAL_EVO_KEY}, 
-                       headers=headers)
-        
-    # 2. Busca o QR Code
-    qr_url = f"{CENTRAL_EVO_URL}/instance/qr?instance={instance_name}"
+    token = authorization.replace("Bearer ", "") if authorization else None
     try:
-        req = requests.get(qr_url, headers={"apikey": CENTRAL_EVO_KEY}, timeout=10)
-        data = req.json()
-        return {"base64": data.get("data", "")}
+        p = get_profile(uid, token=token)
+        if not p: raise HTTPException(status_code=404)
+
+        instance_name = p.get("evo_instance") or slugify(p.get("congregacao") or p.get("nome_completo"))
+        
+        # v3.12: Sincronia Automática (Auto-Repair)
+        sync = sync_evo_data(uid, instance_name, token)
+        
+        if sync and sync.get("connected"):
+            return {"message": "Já conectado"}
+
+        # Se não existe no servidor, cria
+        if not sync:
+            print(f"[DEBUG v3.12] Criando instância inexistente: {instance_name}")
+            requests.post(
+                f"{CENTRAL_EVO_URL}/instance/create",
+                json={"instanceName": instance_name, "qrcode": True},
+                headers=DEFAULT_HEADERS,
+                timeout=DEFAULT_TIMEOUT
+            )
+            time.sleep(1)
+            sync = sync_evo_data(uid, instance_name, token)
+
+        # ETAPA 3: Buscar QR Code (v1.0 requer Instance Token e header 'instance')
+        headers_qr = DEFAULT_HEADERS.copy()
+        headers_qr["instance"] = instance_name
+        # v3.13: QR endpoint na v1.0 exige o Token da Instância, não a Master Key
+        if sync and sync.get("token"):
+            headers_qr["apikey"] = sync["token"]
+        
+        for attempt in range(8):
+            print(f"[DEBUG connect] Tentativa QR {attempt + 1}")
+            try:
+                r_qr = requests.get(f"{CENTRAL_EVO_URL}/instance/qr", headers=headers_qr, timeout=DEFAULT_TIMEOUT)
+                if r_qr.status_code == 200:
+                    qr_data = r_qr.json()
+                    # Mapeia os diversos formatos possíveis (v1.0 usa data.Qrcode)
+                    base64_data = (
+                        qr_data.get("data", {}).get("Qrcode") or 
+                        qr_data.get("qrcode", {}).get("base64") or 
+                        qr_data.get("base64")
+                    )
+                    if base64_data:
+                        add_log(f"📱 QR Code gerado para {instance_name}")
+                        print("[SUCESSO] QR Code capturado!")
+                        return {"base64": base64_data}
+            except Exception as e:
+                print(f"[ERRO QR] {e}")
+            time.sleep(2.5)
+
+        add_log(f"❗ Falha ao obter QR Code após 8 tentativas.")
+        return {"status": "error", "msg": "Não foi possível obter o QR Code. O servidor pode estar processando a instância. Tente novamente em 1 minuto."}
+
     except Exception as e:
-        return {"error": str(e)}
+        print(f"[ERRO connect] {e}")
+        return {"status": "error", "msg": str(e)}
+
 
 @app.post("/api/whatsapp/disconnect")
-def disconnect_whatsapp():
-    config = scraper_sigloc.carregar_config()
-    # No Evolution GO, usa-se POST /instance/disconnect ou DELETE /instance/logout
-    url = f"{config['evo_url']}/instance/logout?instance={config['evo_instance']}"
-    headers = {"apikey": config['evo_apikey']}
+def disconnect_whatsapp(authorization: Optional[str] = Header(None)):
+    uid = get_user_id(authorization)
+    token = authorization.replace("Bearer ", "") if authorization else None
     try:
-        r = requests.delete(url, headers=headers, timeout=10)
-        add_log("WhatsApp desconectado via painel.")
-        return r.json()
-    except Exception as e:
-        return {"error": str(e)}
+        p = get_profile(uid, token=token)
+        if not p:
+            raise HTTPException(status_code=404, detail="Perfil não encontrado")
 
-# Sirva os arquivos estáticos (Frontend)
+        instance_name = p.get("evo_instance") or slugify(
+            p.get("congregacao") or p.get("nome_completo") or "instancia"
+        )
+
+        headers = DEFAULT_HEADERS.copy()
+        headers["apikey"] = CENTRAL_EVO_KEY  # ✅ sempre a chave global
+
+        print(f"[DEBUG disconnect] Deletando: {instance_name}")
+
+        r = requests.delete(
+            f"{CENTRAL_EVO_URL}/instance/{instance_name}",  # ✅ sem /delete/ na URL
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        print(f"[DEBUG disconnect] Status: {r.status_code}")
+
+        # ✅ Limpa o evo_instance do perfil no Supabase
+        db_headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": authorization,
+            "Content-Type": "application/json",
+        }
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}",
+            json={"evo_instance": None},
+            headers=db_headers,
+            timeout=10,
+        )
+
+        return {"status": "success"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERRO disconnect] {e}")
+        return {"status": "error", "msg": str(e)}
+
+# ─────────────────────────────────────────────────────────────
+
 @app.get("/")
 def read_index():
     return FileResponse("index.html")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)

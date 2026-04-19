@@ -18,3 +18,10 @@ __pycache__/
 # Ignorar pastas de IDEs
 .vscode/
 .idea/
+
+# Ignorar logs internos e arquivos temporários
+*.log
+server_logs.txt
+scratch/
+audit_local.py
+profiles_rows.sql
