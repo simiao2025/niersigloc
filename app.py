@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # Carrega variáveis de ambiente
 load_dotenv()
 
-app = FastAPI(title="Niarsigloc Cloud")
+app = FastAPI(title="Gerenciar Aniversariantes")
 
 # CONFIGURAÇÕES SUPABASE
 SUPABASE_URL = os.getenv("SUPABASE_URL")
