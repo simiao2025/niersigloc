@@ -271,6 +271,25 @@ def get_whatsapp_status(authorization: Optional[str] = Header(None)):
         if r.status_code == 200:
             data = r.json().get("data", [])
             match = next((i for i in data if i.get("name") == instance_name), None)
+            
+            # v3.16: Lógica de Auto-Reparar: Se a instância não existir no servidor Go, recriamos.
+            if not match:
+                print(f"[AUTO-REPAIR] Instância '{instance_name}' sumiu do Evolution. Recriando...")
+                add_log(f"🛠️ Auto-Reparo: Recriando instância {instance_name}...")
+                
+                # Recria a instância
+                requests.post(
+                    f"{CENTRAL_EVO_URL}/instance/create",
+                    json={"instanceName": instance_name, "qrcode": True},
+                    headers=DEFAULT_HEADERS,
+                    timeout=DEFAULT_TIMEOUT
+                )
+                
+                # Aguarda e sincroniza o novo Token
+                time.sleep(1)
+                sync_evo_data(uid, instance_name, token)
+                return {"status": "disconnected"} # Status inicial de uma nova instância
+
             if match and match.get("connected"):
                 return {"status": "open"}
 

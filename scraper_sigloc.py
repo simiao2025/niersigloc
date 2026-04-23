@@ -123,6 +123,14 @@ DEFAULT_HEADERS = {
     "apikey": CENTRAL_EVO_KEY
 }
 
+def db_update_evo_token(user_id, new_token):
+    """Atualiza o token da instância no banco de dados"""
+    url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}"
+    headers = {"apikey": DB_KEY, "Authorization": f"Bearer {DB_KEY}", "Content-Type": "application/json"}
+    try:
+        requests.patch(url, json={"evo_apikey": new_token}, headers=headers, timeout=10)
+    except: pass
+
 def enviar_whatsapp(mensagem: str, config):
     if not mensagem or not config: return False
     
@@ -130,6 +138,29 @@ def enviar_whatsapp(mensagem: str, config):
     instance_name = config.get('evo_instance', 'default')
     # v3.11: Prioriza o token real da instância (apikey específica)
     instance_token = config.get('evo_apikey') or CENTRAL_EVO_KEY
+
+    # v3.16: Auto-conferência antes de enviar (Auto-Repair Silencioso)
+    try:
+        if instance_name != 'default':
+            check = requests.get(f"{CENTRAL_EVO_URL}/instance/all", headers=DEFAULT_HEADERS, timeout=8)
+            if check.status_code == 200:
+                data = check.json().get("data", [])
+                match = next((i for i in data if i.get("name") == instance_name), None)
+                if not match:
+                    print(f"[AUTO-ROBOT] Instância {instance_name} não existe. Recriando...")
+                    r_create = requests.post(f"{CENTRAL_EVO_URL}/instance/create", 
+                                          json={"instanceName": instance_name, "qrcode": True}, 
+                                          headers=DEFAULT_HEADERS, timeout=10)
+                    if r_create.status_code in [200, 201] and config.get('id'):
+                        time.sleep(1.5)
+                        r_all = requests.get(f"{CENTRAL_EVO_URL}/instance/all", headers=DEFAULT_HEADERS, timeout=8)
+                        new_data = r_all.json().get("data", [])
+                        new_match = next((i for i in new_data if i.get("name") == instance_name), None)
+                        if new_match:
+                            instance_token = new_match.get('token') # Atualiza para o envio atual
+                            db_update_evo_token(config.get('id'), instance_token) # Salva para os próximos
+    except Exception as e:
+        print(f"[ERR AUTO-REPAIR] {e}")
 
     print(f"\n[->] Enviando para {dest} via Instância {instance_name}...")
     
