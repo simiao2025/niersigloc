@@ -115,7 +115,7 @@ def sync_evo_data(user_id, instance_name, auth_token=None):
                 }
                 requests.patch(
                     f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{user_id}",
-                    json={"evo_apikey": token, "evo_url": CENTRAL_EVO_URL},
+                    json={"evo_apikey": encrypt_pwd(token), "evo_url": CENTRAL_EVO_URL},
                     headers=db_headers,
                     timeout=10
                 )
@@ -149,6 +149,10 @@ def run_scheduler_v2():
 
                 for p in profiles:
                     hora_alvo = p.get('hora_execucao', '08:00')
+                    # v3.29: Descriptografa segredos para processamento do robô
+                    p['sigloc_senha'] = decrypt_pwd(p.get('sigloc_senha'))
+                    p['evo_apikey'] = decrypt_pwd(p.get('evo_apikey'))
+                    
                     if p['frequencia'] == 'mensal' and hoje.day == 1 and agora_str == '00:01':
                         add_log(f"📅 Mensal Iniciado: {p.get('nome_completo')}")
                         threading.Thread(target=scraper_sigloc.job, args=(p, add_log)).start()
@@ -164,18 +168,28 @@ if not os.environ.get("SCHEDULER_RUNNING"):
     os.environ["SCHEDULER_RUNNING"] = "true"
     threading.Thread(target=run_scheduler_v2, daemon=True).start()
 
-def get_profile(uid, token=None):
+# Campos seguros para retornar ao Frontend (Oculta senhas e chaves)
+SAFE_FIELDS = "id,congregacao,grupo_sigloc,nome_completo,sigloc_email,frequencia,hora_execucao,target_phone,msg_vazio,evo_instance"
+
+def get_profile(uid, token=None, full=False):
     try:
+        fields = "*" if full else SAFE_FIELDS
         auth_header = f"Bearer {token}" if token else f"Bearer {SUPABASE_KEY}"
         headers = {"apikey": SUPABASE_KEY, "Authorization": auth_header}
-        url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select=*"
+        url = f"{SUPABASE_URL}/rest/v1/profiles?id=eq.{uid}&select={fields}"
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             data = r.json()
             if isinstance(data, list) and len(data) > 0:
-                return data[0]
+                p = data[0]
+                # Descriptografa campos se for a versão completa (uso interno)
+                if full:
+                    p['sigloc_senha'] = decrypt_pwd(p.get('sigloc_senha'))
+                    p['evo_apikey'] = decrypt_pwd(p.get('evo_apikey'))
+                return p
         return None
-    except:
+    except Exception as e:
+        print(f"[ERR get_profile] {e}")
         return None
 
 # HELPER: Criptografia
@@ -225,10 +239,11 @@ def register(data: UserRegister, request: requests.Request = None):
                 "grupo_sigloc": data.grupo_sigloc,
                 "nome_completo": data.full_name,
                 "sigloc_email": data.email,
-                "sigloc_senha": encrypt_pwd(data.password), # ✅ Senha criptografada
+                "sigloc_senha": encrypt_pwd(data.password),
                 "frequencia": "diario",
                 "hora_execucao": "08:00",
-                "evo_instance": instance_name  # ✅ Salva o nome da instância
+                "evo_instance": instance_name,
+                "evo_apikey": None # Será preenchido no primeiro sync
             }
             print(f"[DEBUG v3.10] Enviando perfil para Supabase: {user_id}")
             r_db = requests.post(f"{SUPABASE_URL}/rest/v1/profiles", json=db_payload, headers=db_headers)
@@ -298,7 +313,7 @@ def update_profile(data: ProfileUpdate, authorization: Optional[str] = Header(No
 @app.post("/api/run-now")
 def run_now(authorization: Optional[str] = Header(None)):
     uid = get_user_id(authorization)
-    p = get_profile(uid, token=authorization.replace("Bearer ", ""))
+    p = get_profile(uid, token=authorization.replace("Bearer ", ""), full=True)
     if p:
         add_log(f"🚀 Gatilho manual: {p.get('nome_completo')}")
         threading.Thread(target=scraper_sigloc.job, args=(p, add_log)).start()
@@ -318,7 +333,7 @@ def get_whatsapp_status(authorization: Optional[str] = Header(None)):
     uid = get_user_id(authorization)
     token = authorization.replace("Bearer ", "") if authorization else None
     try:
-        p = get_profile(uid, token=token)
+        p = get_profile(uid, token=token, full=True)
         if not p or not p.get("evo_instance"):
             return {"status": "disconnected"}
 
@@ -367,7 +382,7 @@ def connect_whatsapp(authorization: Optional[str] = Header(None)):
     uid = get_user_id(authorization)
     token = authorization.replace("Bearer ", "") if authorization else None
     try:
-        p = get_profile(uid, token=token)
+        p = get_profile(uid, token=token, full=True)
         if not p: raise HTTPException(status_code=404)
 
         # v3.20: Nome da instância compartilhado
