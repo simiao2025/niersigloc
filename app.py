@@ -190,12 +190,20 @@ def decrypt_pwd(pwd):
     except:
         return pwd # Fallback se não estiver criptografado
 
+def ensure_min_6(pwd):
+    # v3.28: Se a senha for curta (ex: 4 dígitos do SIGLOC), 
+    # adicionamos um sufixo para o Supabase aceitar (mínimo 6)
+    if len(pwd or "") < 6:
+        return f"{pwd}_sigloc"
+    return pwd
+
 @app.post("/api/auth/register")
 @limiter.limit("5/minute")
 def register(data: UserRegister, request: requests.Request = None):
     auth_url = f"{SUPABASE_URL}/auth/v1/signup"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
-    payload = {"email": data.email, "password": data.password, "data": {"full_name": data.full_name}}
+    # v3.28: Garante 6 caracteres para o Auth, mas salva original no DB
+    payload = {"email": data.email, "password": ensure_min_6(data.password), "data": {"full_name": data.full_name}}
     try:
         r = requests.post(auth_url, json=payload, headers=headers)
         res_auth = r.json() if r.status_code in [200, 201] else {}
@@ -251,7 +259,12 @@ def register(data: UserRegister, request: requests.Request = None):
 def login(data: UserLogin, request: requests.Request = None):
     auth_url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
-    r = requests.post(auth_url, json=data.model_dump(), headers=headers)
+    
+    # v3.28: Aplica o mesmo ajuste de tamanho se necessário
+    payload = data.model_dump()
+    payload["password"] = ensure_min_6(payload.get("password", ""))
+    
+    r = requests.post(auth_url, json=payload, headers=headers)
     if r.status_code == 200:
         return r.json()
     raise HTTPException(status_code=401, detail="Logon falhou")
