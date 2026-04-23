@@ -3,7 +3,7 @@ import os
 import threading
 import time
 import requests
-from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
+from fastapi import FastAPI, BackgroundTasks, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -224,7 +224,7 @@ def ensure_min_6(pwd):
 
 @app.post("/api/auth/register")
 @limiter.limit("5/minute")
-def register(data: UserRegister, request: requests.Request = None):
+def register(data: UserRegister, request: Request):
     auth_url = f"{SUPABASE_URL}/auth/v1/signup"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
     # v3.28: Garante 6 caracteres para o Auth, mas salva original no DB
@@ -281,7 +281,7 @@ def register(data: UserRegister, request: requests.Request = None):
 
 @app.post("/api/auth/login")
 @limiter.limit("10/minute")
-def login(data: UserLogin, request: requests.Request = None):
+def login(data: UserLogin, request: Request):
     auth_url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
     
