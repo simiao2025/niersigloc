@@ -282,41 +282,46 @@ def extrair_lista(driver, titulo_texto: str):
         print(f"[ERR EXTRAÇÃO] {e}")
         return []
 
-def job(profile=None):
+def job(profile=None, log_func=None):
     if not profile or not isinstance(profile, dict):
         print("[!] Job ignorado: Perfil inválido.")
         return
     
+    def report(m):
+        if log_func: log_func(m)
+        print(m)
+
     config = profile
     user_id = config.get('id')
     frequencia = config.get('frequencia', 'diario')
-    print(f"\n[EXEC v2.8] Iniciando tarefa: {datetime.now().strftime('%H:%M:%S')}")
+    congregacao = config.get('congregacao', 'Instância')
+    report(f"🤖 Robô acionado para {congregacao}...")
     
     aniv_v = []
     aniv_c = []
 
     try:
         if str(frequencia).lower() == "diario" and user_id:
-            log_debug("[->] Verificando Cache DB hoje...")
+            report(f"🔍 Consultando banco de dados para {congregacao}...")
             aniv_v, aniv_c = db_get_aniversariantes_hoje(user_id)
             
             if aniv_v or aniv_c:
-                log_debug("[OK] Encontrado no banco hoje. Enviando...")
+                report(f"📦 Dados encontrados no banco: {len(aniv_v)} aniversariantes e {len(aniv_c)} casamentos identificados.")
+                report(f"✉️ Criando lista e enviando mensagens para {congregacao}...")
                 msg = formatar_mensagem(aniv_v, aniv_c, "diario", config.get('msg_vazio', ''))
                 enviar_whatsapp(msg, config)
+                report(f"✅ Disparo diário concluído para {congregacao}.")
                 return
             
-            log_debug("[->] Vazio hoje. Verificando se o mês já foi raspado...")
+            report(f"⚠️ Dados de hoje não encontrados no banco. Iniciando robô SIGLOC...")
             if db_has_month_data(user_id):
-                log_debug("[OK] Mês já consta como raspado no banco.")
                 if config.get('msg_vazio'):
                     msg = formatar_mensagem([], [], "diario", config.get('msg_vazio', ''))
                     enviar_whatsapp(msg, config)
+                report(f"ℹ️ Mês já processado anteriormente. Sem envio extra hoje.")
                 return
             
-            log_debug("[!] Mês não encontrado no banco. Iniciando SIGLOC...")
-
-        log_debug("[->] Iniciando raspagem SIGLOC...")
+        report(f"🔑 Acessando portal SIGLOC para {congregacao}...")
         driver = criar_driver()
         try:
             driver.get("https://www.sigloc.com.br/login/")
@@ -326,23 +331,24 @@ def job(profile=None):
             driver.find_element(By.NAME, "senha").send_keys(config.get('sigloc_senha', ''))
             driver.find_element(By.CSS_SELECTOR, "input.btn-success").click()
             
-            # Aguarda login
             WebDriverWait(driver, 30).until(lambda d: "index.php" in d.current_url)
             
-            # Navega para o Dashboard IG
+            report(f"📄 Extraindo lista de aniversários do Portal...")
             driver.get("https://www.sigloc.com.br/sigloc/index.php/siglocig")
-            time.sleep(12) # Tempo extra para carregar widgets dinâmicos
+            time.sleep(12)
             
             aniv_v = extrair_lista(driver, "Aniversariantes do Mês") or []
             aniv_c = extrair_lista(driver, "Aniversariantes de Casamento") or []
             
             if user_id:
+                report(f"💾 Salvando dados extraídos no banco de dados...")
                 db_save_aniversariantes(user_id, aniv_v, "aniversario")
                 db_save_aniversariantes(user_id, aniv_c, "bodas")
             
+            report(f"✉️ Preparando e enviando mensagens via WhatsApp...")
             msg = formatar_mensagem(aniv_v, aniv_c, frequencia, config.get('msg_vazio', ''))
             enviar_whatsapp(msg, config)
-            print("[OK] Job concluído com sucesso.")
+            report(f"✅ Robô de raspagem finalizado para {congregacao}.")
             
         except Exception as inner_e:
             print(f"[BUG INTERNO] {inner_e}")
